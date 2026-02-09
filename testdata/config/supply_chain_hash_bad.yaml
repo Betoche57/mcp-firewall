@@ -1,0 +1,9 @@
+downstreams:
+  echoserver:
+    command: ./testdata/echoserver/echoserver
+    hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+policy:
+  default: allow
+
+log_level: debug

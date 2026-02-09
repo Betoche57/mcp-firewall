@@ -1,0 +1,12 @@
+supply_chain:
+  allowed_paths:
+    - /home
+
+downstreams:
+  echoserver:
+    command: ./testdata/echoserver/echoserver
+
+policy:
+  default: allow
+
+log_level: debug

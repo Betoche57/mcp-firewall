@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"sort"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/VikingOwl91/mcp-firewall/internal/logging"
 	"github.com/VikingOwl91/mcp-firewall/internal/policy"
 	"github.com/VikingOwl91/mcp-firewall/internal/redaction"
+	"github.com/VikingOwl91/mcp-firewall/internal/sandbox"
+	"github.com/VikingOwl91/mcp-firewall/internal/supply"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -22,15 +25,18 @@ type downstreamEntry struct {
 }
 
 type Proxy struct {
-	cfg               *config.Config
-	logger            *slog.Logger
-	server            *mcp.Server
-	downstreams       map[string]*downstreamEntry
-	policy            *policy.Engine
-	redaction         *redaction.Engine
-	resourceRoutes    map[string]string // URI → alias
-	profileName       string
-	localOverridePath string
+	cfg                 *config.Config
+	logger              *slog.Logger
+	server              *mcp.Server
+	downstreams         map[string]*downstreamEntry
+	policy              *policy.Engine
+	redaction           *redaction.Engine
+	resourceRoutes      map[string]string // URI → alias
+	profileName         string
+	localOverridePath   string
+	workspacePath       string
+	sandboxCaps         *sandbox.Capabilities
+	supplyChainResults  map[string]*supply.VerifyResult
 }
 
 // ProxyOption configures optional Proxy behavior.
@@ -41,6 +47,13 @@ func WithProvenance(profile, localPath string) ProxyOption {
 	return func(p *Proxy) {
 		p.profileName = profile
 		p.localOverridePath = localPath
+	}
+}
+
+// WithWorkspace sets the workspace path for sandbox workspace access.
+func WithWorkspace(path string) ProxyOption {
+	return func(p *Proxy) {
+		p.workspacePath = path
 	}
 }
 
@@ -144,10 +157,21 @@ func (p *Proxy) registerTools(ctx context.Context, alias string, session *mcp.Cl
 
 		serverAlias := alias
 		ds := session
+		sandboxed := p.isDownstreamSandboxed(serverAlias)
+		hashVerified := p.isDownstreamHashVerified(serverAlias)
 		p.server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if info := logging.GetAuditInfo(ctx); info != nil {
 				info.Server = serverAlias
 				info.ToolName = originalName
+				if sandboxed {
+					info.Sandboxed = true
+					if p.sandboxCaps != nil {
+						info.SandboxLevel = p.sandboxCaps.EffectiveLevel()
+					}
+				}
+				if hashVerified {
+					info.HashVerified = true
+				}
 			}
 
 			var argsMap map[string]any
@@ -276,10 +300,21 @@ func (p *Proxy) registerResources(ctx context.Context, alias string, session *mc
 
 		serverAlias := alias
 		ds := session
+		sandboxed := p.isDownstreamSandboxed(serverAlias)
+		hashVerified := p.isDownstreamHashVerified(serverAlias)
 		p.server.AddResource(res, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 			if info := logging.GetAuditInfo(ctx); info != nil {
 				info.Server = serverAlias
 				info.ResourceURI = req.Params.URI
+				if sandboxed {
+					info.Sandboxed = true
+					if p.sandboxCaps != nil {
+						info.SandboxLevel = p.sandboxCaps.EffectiveLevel()
+					}
+				}
+				if hashVerified {
+					info.HashVerified = true
+				}
 			}
 
 			if p.policy != nil {
@@ -364,10 +399,106 @@ func (p *Proxy) ServeUpstream(ctx context.Context, t mcp.Transport) error {
 	return p.server.Run(ctx, t)
 }
 
+func (p *Proxy) isDownstreamSandboxed(alias string) bool {
+	sc, ok := p.cfg.Downstreams[alias]
+	return ok && sc.Sandbox != "" && sc.Sandbox != "none"
+}
+
+func (p *Proxy) isDownstreamHashVerified(alias string) bool {
+	r, ok := p.supplyChainResults[alias]
+	return ok && r != nil && r.ComputedHash != ""
+}
+
+// toSandboxProfiles converts config sandbox profiles to sandbox package types.
+func toSandboxProfiles(cfgProfiles map[string]config.SandboxProfileConfig) map[string]sandbox.SandboxProfileConfig {
+	if len(cfgProfiles) == 0 {
+		return nil
+	}
+	result := make(map[string]sandbox.SandboxProfileConfig, len(cfgProfiles))
+	for name, p := range cfgProfiles {
+		result[name] = sandbox.SandboxProfileConfig{
+			Network:      p.Network,
+			EnvAllowlist: p.EnvAllowlist,
+			FSDeny:       p.FSDeny,
+			FSAllowRO:    p.FSAllowRO,
+			FSAllowRW:    p.FSAllowRW,
+			Workspace:    p.Workspace,
+		}
+	}
+	return result
+}
+
+func (p *Proxy) verifySupplyChain(alias string, sc config.ServerConfig) (*supply.VerifyResult, error) {
+	hasHash := sc.Hash != ""
+	hasPaths := len(p.cfg.SupplyChain.AllowedPaths) > 0
+
+	if !hasHash && !hasPaths {
+		return nil, nil
+	}
+
+	result, err := supply.Verify(sc.Command, sc.Hash, p.cfg.SupplyChain.AllowedPaths)
+	if err != nil {
+		return nil, fmt.Errorf("downstream %q: %w", alias, err)
+	}
+
+	attrs := []any{
+		slog.String("alias", alias),
+		slog.String("resolved_path", result.ResolvedPath),
+	}
+	if result.ComputedHash != "" {
+		attrs = append(attrs, slog.String("hash", result.ComputedHash), slog.Bool("hash_verified", true))
+	}
+	if hasPaths {
+		attrs = append(attrs, slog.Bool("path_verified", true))
+	}
+	p.logger.Info("supply chain verified", attrs...)
+
+	return result, nil
+}
+
 func (p *Proxy) Run(ctx context.Context, upstream mcp.Transport) error {
+	// Detect sandbox capabilities once
+	caps := sandbox.DetectCapabilities()
+	p.sandboxCaps = &caps
+
+	// Verify supply chain for all downstreams before spawning any
+	p.supplyChainResults = make(map[string]*supply.VerifyResult)
 	for alias, sc := range p.cfg.Downstreams {
-		cmd := exec.CommandContext(ctx, sc.Command, sc.Args...)
-		cmd.Env = append(cmd.Environ(), sc.Env...)
+		result, err := p.verifySupplyChain(alias, sc)
+		if err != nil {
+			return err
+		}
+		if result != nil {
+			p.supplyChainResults[alias] = result
+		}
+	}
+
+	selfPath, _ := os.Executable()
+
+	for alias, sc := range p.cfg.Downstreams {
+		var cmd *exec.Cmd
+
+		if sc.Sandbox != "" && sc.Sandbox != "none" {
+			profile, err := sandbox.ResolveProfile(sc.Sandbox, toSandboxProfiles(p.cfg.SandboxProfiles))
+			if err != nil {
+				return fmt.Errorf("downstream %q: %w", alias, err)
+			}
+			cmd, err = sandbox.BuildSandboxedCmd(
+				ctx, selfPath, profile, caps,
+				sc.Command, sc.Args, sc.Env, p.workspacePath,
+			)
+			if err != nil {
+				return fmt.Errorf("downstream %q sandbox: %w", alias, err)
+			}
+			p.logger.Info("sandboxed downstream",
+				slog.String("alias", alias),
+				slog.String("profile", sc.Sandbox),
+				slog.String("level", caps.EffectiveLevel()),
+			)
+		} else {
+			cmd = exec.CommandContext(ctx, sc.Command, sc.Args...)
+			cmd.Env = append(cmd.Environ(), sc.Env...)
+		}
 
 		t := &mcp.CommandTransport{Command: cmd}
 		if err := p.ConnectDownstream(ctx, alias, t); err != nil {

@@ -640,6 +640,284 @@ func TestResolveConfig_InvalidProfile(t *testing.T) {
 	assert.Contains(t, err.Error(), "nonexistent")
 }
 
+// --- Sandbox validation tests ---
+
+func TestValidate_SandboxNone(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "none"},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_SandboxStrict(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "strict"},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_SandboxEmpty(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo"},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_SandboxCustomProfile(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "custom"},
+		},
+		SandboxProfiles: map[string]config.SandboxProfileConfig{
+			"custom": {
+				FSAllowRO: []string{"/usr", "/lib"},
+				FSAllowRW: []string{"/tmp"},
+				Workspace: "rw",
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_SandboxUndefinedProfile(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "nonexistent"},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nonexistent")
+	assert.Contains(t, err.Error(), "not defined")
+}
+
+func TestValidate_SandboxInvalidWorkspace(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "custom"},
+		},
+		SandboxProfiles: map[string]config.SandboxProfileConfig{
+			"custom": {
+				Workspace: "invalid",
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace")
+}
+
+func TestValidate_SandboxRelativePath(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "custom"},
+		},
+		SandboxProfiles: map[string]config.SandboxProfileConfig{
+			"custom": {
+				FSAllowRO: []string{"relative/path"},
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "absolute")
+}
+
+func TestValidate_SandboxDenyOverlapWithAllow(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "custom"},
+		},
+		SandboxProfiles: map[string]config.SandboxProfileConfig{
+			"custom": {
+				FSDeny:    []string{"~/.ssh"},
+				FSAllowRO: []string{"~/.ssh"},
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "~/.ssh")
+}
+
+func TestValidate_SandboxReservedProfileName(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo"},
+		},
+		SandboxProfiles: map[string]config.SandboxProfileConfig{
+			"strict": {},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reserved")
+}
+
+func TestValidate_SandboxTildePaths(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo", Sandbox: "custom"},
+		},
+		SandboxProfiles: map[string]config.SandboxProfileConfig{
+			"custom": {
+				FSDeny:    []string{"~/.ssh", "~/.gnupg"},
+				FSAllowRO: []string{"/usr", "/lib"},
+				FSAllowRW: []string{"/tmp"},
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+// --- Supply chain validation tests ---
+
+func TestValidate_HashValid(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {
+				Command: "echo",
+				Hash:    "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_HashInvalidFormat(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {
+				Command: "echo",
+				Hash:    "md5:abcdef0123456789abcdef0123456789",
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported")
+}
+
+func TestValidate_HashBadHex(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {
+				Command: "echo",
+				Hash:    "sha256:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hex")
+}
+
+func TestValidate_HashWrongLength(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {
+				Command: "echo",
+				Hash:    "sha256:abcdef",
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "64")
+}
+
+func TestValidate_HashNoColon(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {
+				Command: "echo",
+				Hash:    "nocolonhere",
+			},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "format")
+}
+
+func TestValidate_AllowedPathsAbsolute(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo"},
+		},
+		SupplyChain: config.SupplyChainConfig{
+			AllowedPaths: []string{"/usr/local/bin", "/opt/servers"},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_AllowedPathsRelative(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo"},
+		},
+		SupplyChain: config.SupplyChainConfig{
+			AllowedPaths: []string{"relative/path"},
+		},
+	}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "absolute")
+}
+
+func TestValidate_AllowedPathsTilde(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo"},
+		},
+		SupplyChain: config.SupplyChainConfig{
+			AllowedPaths: []string{"~/bin"},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_SupplyChainEmpty(t *testing.T) {
+	cfg := &config.Config{
+		Downstreams: map[string]config.ServerConfig{
+			"myserver": {Command: "echo"},
+		},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+}
+
+func TestLocalOverride_SupplyChainBlocked(t *testing.T) {
+	dir := t.TempDir()
+	localPath := dir + "/.mcp-firewall.yaml"
+	localContent := `
+supply_chain:
+  allowed_paths:
+    - /usr/local/bin
+`
+	require.NoError(t, writeFile(localPath, localContent))
+
+	_, err := config.LoadLocal(localPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "supply_chain")
+	assert.Contains(t, err.Error(), "not allowed")
+}
+
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }

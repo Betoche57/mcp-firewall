@@ -14,6 +14,9 @@ type AuditInfo struct {
 	Timeout        bool
 	Truncated      bool
 	Redacted       bool
+	Sandboxed      bool
+	SandboxLevel   string // "full"|"partial"|"minimal"|"none"
+	HashVerified   bool
 }
 
 func WithAuditInfo(ctx context.Context, info *AuditInfo) context.Context {

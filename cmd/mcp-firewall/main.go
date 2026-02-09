@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -11,10 +12,21 @@ import (
 
 	"github.com/VikingOwl91/mcp-firewall/internal/config"
 	"github.com/VikingOwl91/mcp-firewall/internal/proxy"
+	"github.com/VikingOwl91/mcp-firewall/internal/sandbox"
+	"github.com/VikingOwl91/mcp-firewall/internal/supply"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
+	// Detect re-exec sentinel BEFORE flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "__sandbox__" {
+		if err := sandbox.RunSandboxEntrypoint(); err != nil {
+			fmt.Fprintf(os.Stderr, "sandbox: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(1) // unreachable — RunSandboxEntrypoint calls syscall.Exec
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		slog.Error("failed to determine home directory", slog.String("error", err.Error()))
@@ -25,7 +37,13 @@ func main() {
 	configPath := flag.String("config", defaultConfig, "path to config file")
 	profileName := flag.String("profile", "", "config profile name (env: MCP_FIREWALL_PROFILE)")
 	workspacePath := flag.String("workspace", "", "workspace directory for local override (auto-detected if omitted)")
+	generateLockfile := flag.Bool("generate-lockfile", false, "generate lockfile YAML with hashes for all downstreams and exit")
 	flag.Parse()
+
+	if *generateLockfile {
+		runGenerateLockfile(*configPath)
+		return
+	}
 
 	// Auto-detect workspace if not specified
 	workspace := *workspacePath
@@ -47,11 +65,37 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	p := proxy.New(resolved.Config, logger, proxy.WithProvenance(resolved.ProfileName, resolved.LocalOverride))
+	p := proxy.New(resolved.Config, logger,
+		proxy.WithProvenance(resolved.ProfileName, resolved.LocalOverride),
+		proxy.WithWorkspace(workspace),
+	)
 
 	if err := p.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		logger.Error("proxy exited with error", slog.String("error", err.Error()))
 		os.Exit(1)
+	}
+}
+
+func runGenerateLockfile(configPath string) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("downstreams:")
+	for alias, sc := range cfg.Downstreams {
+		resolved, err := supply.ResolvePath(sc.Command)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  %s: # error resolving: %v\n", alias, err)
+			continue
+		}
+		hash, err := supply.ComputeFileHash(resolved)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  %s: # error hashing: %v\n", alias, err)
+			continue
+		}
+		fmt.Printf("  %s:\n    hash: %q\n", alias, hash)
 	}
 }
 

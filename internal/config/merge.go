@@ -181,5 +181,13 @@ func copyConfig(c *Config) *Config {
 	result.Redaction.Patterns = make([]RedactionPattern, len(c.Redaction.Patterns))
 	copy(result.Redaction.Patterns, c.Redaction.Patterns)
 
+	// Deep copy sandbox profiles
+	if len(c.SandboxProfiles) > 0 {
+		result.SandboxProfiles = make(map[string]SandboxProfileConfig, len(c.SandboxProfiles))
+		for k, v := range c.SandboxProfiles {
+			result.SandboxProfiles[k] = v
+		}
+	}
+
 	return &result
 }

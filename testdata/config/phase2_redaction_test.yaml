@@ -1,0 +1,15 @@
+downstreams:
+  echoserver:
+    command: ./testdata/echoserver/echoserver
+
+policy:
+  default: allow
+
+redaction:
+  patterns:
+    - name: api-key
+      pattern: 'sk-[a-zA-Z0-9]{10,}'
+    - name: password
+      pattern: 'password:\s*\S+'
+
+log_level: debug

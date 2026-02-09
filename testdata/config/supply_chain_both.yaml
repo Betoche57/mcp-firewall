@@ -1,0 +1,13 @@
+supply_chain:
+  allowed_paths:
+    - /home
+
+downstreams:
+  echoserver:
+    command: ./testdata/echoserver/echoserver
+    hash: "sha256:15062c835870d5bd03d3ff581a441b389c705d5a12bba1e897ff75af65530203"
+
+policy:
+  default: allow
+
+log_level: debug

@@ -26,6 +26,7 @@ type LocalOverride struct {
 type localOverrideRaw struct {
 	Downstreams any `yaml:"downstreams" json:"downstreams"`
 	Profiles    any `yaml:"profiles" json:"profiles"`
+	SupplyChain any `yaml:"supply_chain" json:"supply_chain"`
 }
 
 // LoadLocal loads a local override file (.mcp-firewall.yaml, .yml, or .json).
@@ -49,6 +50,9 @@ func LoadLocal(path string) (*LocalOverride, error) {
 	}
 	if raw.Profiles != nil {
 		return nil, fmt.Errorf("local override %s: 'profiles' is not allowed in local overrides", path)
+	}
+	if raw.SupplyChain != nil {
+		return nil, fmt.Errorf("local override %s: 'supply_chain' is not allowed in local overrides", path)
 	}
 
 	var lo LocalOverride

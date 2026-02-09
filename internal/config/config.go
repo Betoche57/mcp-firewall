@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/cel-go/cel"
@@ -18,6 +20,21 @@ type ServerConfig struct {
 	Args    []string `yaml:"args,omitempty"`
 	Env     []string `yaml:"env,omitempty"`
 	Timeout string   `yaml:"timeout,omitempty"`
+	Sandbox string   `yaml:"sandbox,omitempty"` // "none" | "strict" | <profile-name>
+	Hash    string   `yaml:"hash,omitempty"`    // "sha256:<64 hex chars>"
+}
+
+type SupplyChainConfig struct {
+	AllowedPaths []string `yaml:"allowed_paths,omitempty" json:"allowed_paths,omitempty"`
+}
+
+type SandboxProfileConfig struct {
+	Network      *bool    `yaml:"network,omitempty" json:"network,omitempty"`
+	EnvAllowlist []string `yaml:"env_allowlist,omitempty" json:"env_allowlist,omitempty"`
+	FSDeny       []string `yaml:"fs_deny,omitempty" json:"fs_deny,omitempty"`
+	FSAllowRO    []string `yaml:"fs_allow_ro,omitempty" json:"fs_allow_ro,omitempty"`
+	FSAllowRW    []string `yaml:"fs_allow_rw,omitempty" json:"fs_allow_rw,omitempty"`
+	Workspace    string   `yaml:"workspace,omitempty" json:"workspace,omitempty"` // "ro"|"rw"|"none"
 }
 
 type PolicyRule struct {
@@ -44,13 +61,15 @@ type RedactionConfig struct {
 }
 
 type Config struct {
-	Downstreams     map[string]ServerConfig `yaml:"downstreams"`
-	Policy          PolicyConfig            `yaml:"policy,omitempty"`
-	Redaction       RedactionConfig         `yaml:"redaction,omitempty"`
-	LogLevel        string                  `yaml:"log_level"`
-	Timeout         string                  `yaml:"timeout,omitempty"`
-	MaxOutputBytes  int                     `yaml:"max_output_bytes,omitempty"`
-	ApprovalTimeout string                  `yaml:"approval_timeout,omitempty"`
+	Downstreams     map[string]ServerConfig         `yaml:"downstreams"`
+	Policy          PolicyConfig                    `yaml:"policy,omitempty"`
+	Redaction       RedactionConfig                 `yaml:"redaction,omitempty"`
+	LogLevel        string                          `yaml:"log_level"`
+	Timeout         string                          `yaml:"timeout,omitempty"`
+	MaxOutputBytes  int                             `yaml:"max_output_bytes,omitempty"`
+	ApprovalTimeout string                          `yaml:"approval_timeout,omitempty"`
+	SandboxProfiles map[string]SandboxProfileConfig `yaml:"sandbox_profiles,omitempty"`
+	SupplyChain     SupplyChainConfig               `yaml:"supply_chain,omitempty"`
 }
 
 // GlobalConfig is the top-level config file structure supporting named profiles.
@@ -263,6 +282,14 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if err := c.validateSandbox(); err != nil {
+		return err
+	}
+
+	if err := c.validateSupplyChain(); err != nil {
+		return err
+	}
+
 	if c.LogLevel == "" {
 		c.LogLevel = "info"
 	}
@@ -339,6 +366,117 @@ func (c *Config) validateRedaction() error {
 			return fmt.Errorf("redaction pattern %d: duplicate name %q", i, p.Name)
 		}
 		seen[p.Name] = true
+	}
+	return nil
+}
+
+var validWorkspaceValues = map[string]bool{"ro": true, "rw": true, "none": true}
+
+func (c *Config) validateSandbox() error {
+	// Validate sandbox profiles
+	for name, profile := range c.SandboxProfiles {
+		if name == "strict" || name == "none" {
+			return fmt.Errorf("sandbox_profiles: %q is a reserved profile name", name)
+		}
+		if err := validateSandboxProfile(name, profile); err != nil {
+			return err
+		}
+	}
+
+	// Validate downstream sandbox references
+	for alias, sc := range c.Downstreams {
+		if sc.Sandbox == "" || sc.Sandbox == "none" || sc.Sandbox == "strict" {
+			continue
+		}
+		if _, ok := c.SandboxProfiles[sc.Sandbox]; !ok {
+			return fmt.Errorf("downstream %q: sandbox profile %q is not defined in sandbox_profiles", alias, sc.Sandbox)
+		}
+	}
+
+	return nil
+}
+
+func validateSandboxProfile(name string, p SandboxProfileConfig) error {
+	if p.Workspace != "" && !validWorkspaceValues[p.Workspace] {
+		return fmt.Errorf("sandbox_profiles[%q]: workspace must be 'ro', 'rw', or 'none', got %q", name, p.Workspace)
+	}
+
+	for _, path := range p.FSDeny {
+		if !isAbsOrTilde(path) {
+			return fmt.Errorf("sandbox_profiles[%q]: fs_deny path %q must be absolute or ~-prefixed", name, path)
+		}
+	}
+	for _, path := range p.FSAllowRO {
+		if !isAbsOrTilde(path) {
+			return fmt.Errorf("sandbox_profiles[%q]: fs_allow_ro path %q must be absolute or ~-prefixed", name, path)
+		}
+	}
+	for _, path := range p.FSAllowRW {
+		if !isAbsOrTilde(path) {
+			return fmt.Errorf("sandbox_profiles[%q]: fs_allow_rw path %q must be absolute or ~-prefixed", name, path)
+		}
+	}
+
+	// Deny paths must not appear in allow paths
+	denySet := make(map[string]bool, len(p.FSDeny))
+	for _, d := range p.FSDeny {
+		denySet[d] = true
+	}
+	for _, a := range p.FSAllowRO {
+		if denySet[a] {
+			return fmt.Errorf("sandbox_profiles[%q]: path %q appears in both fs_deny and fs_allow_ro", name, a)
+		}
+	}
+	for _, a := range p.FSAllowRW {
+		if denySet[a] {
+			return fmt.Errorf("sandbox_profiles[%q]: path %q appears in both fs_deny and fs_allow_rw", name, a)
+		}
+	}
+
+	return nil
+}
+
+func isAbsOrTilde(path string) bool {
+	return strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~/")
+}
+
+func (c *Config) validateSupplyChain() error {
+	// Validate hash fields on downstreams
+	for alias, sc := range c.Downstreams {
+		if sc.Hash == "" {
+			continue
+		}
+		if err := validateHashFormat(sc.Hash); err != nil {
+			return fmt.Errorf("downstream %q: %w", alias, err)
+		}
+	}
+
+	// Validate allowed_paths
+	for _, path := range c.SupplyChain.AllowedPaths {
+		if !isAbsOrTilde(path) {
+			return fmt.Errorf("supply_chain.allowed_paths: path %q must be absolute or ~-prefixed", path)
+		}
+	}
+
+	return nil
+}
+
+func validateHashFormat(s string) error {
+	idx := strings.Index(s, ":")
+	if idx < 0 {
+		return fmt.Errorf("invalid hash format %q: expected \"sha256:<hex>\"", s)
+	}
+	algo := s[:idx]
+	digest := s[idx+1:]
+
+	if algo != "sha256" {
+		return fmt.Errorf("unsupported hash algorithm %q: only \"sha256\" is supported", algo)
+	}
+	if len(digest) != 64 {
+		return fmt.Errorf("sha256 hash digest must be 64 hex characters, got %d", len(digest))
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return fmt.Errorf("invalid hex in hash %q: %w", s, err)
 	}
 	return nil
 }

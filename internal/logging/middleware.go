@@ -53,6 +53,15 @@ func NewReceivingMiddleware(logger *slog.Logger, hc *HashChain) mcp.Middleware {
 			if info.Redacted {
 				attrs = append(attrs, slog.Bool("redacted", true))
 			}
+			if info.Sandboxed {
+				attrs = append(attrs, slog.Bool("sandboxed", true))
+				if info.SandboxLevel != "" {
+					attrs = append(attrs, slog.String("sandbox_level", info.SandboxLevel))
+				}
+			}
+			if info.HashVerified {
+				attrs = append(attrs, slog.Bool("hash_verified", true))
+			}
 
 			if hc != nil {
 				canonical, _ := json.Marshal(attrsToMap(attrs))
