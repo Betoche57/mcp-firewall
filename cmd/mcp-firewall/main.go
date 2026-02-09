@@ -76,7 +76,7 @@ func main() {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "error: config file not found: %s\n", *configPath)
-			fmt.Fprintf(os.Stderr, "Run 'mcp-firewall --init' to create a default config.\n")
+			fmt.Fprintf(os.Stderr, "Run 'npx -y @vikingowl/mcp-firewall --init' to create a default config.\n")
 			os.Exit(1)
 		}
 		slog.Error("failed to load config", slog.String("error", err.Error()))
