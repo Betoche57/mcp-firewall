@@ -14,3 +14,9 @@ run config="config.yaml": build
 
 echoserver:
     go build -o testdata/echoserver/echoserver ./testdata/echoserver
+
+version v:
+    go build -ldflags "-s -w -X main.version={{v}} -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o mcp-firewall ./cmd/mcp-firewall
+
+snapshot:
+    goreleaser release --snapshot --clean

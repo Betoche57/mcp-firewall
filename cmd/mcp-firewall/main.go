@@ -17,6 +17,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func main() {
 	// Detect re-exec sentinel BEFORE flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "__sandbox__" {
@@ -38,7 +44,13 @@ func main() {
 	profileName := flag.String("profile", "", "config profile name (env: MCP_FIREWALL_PROFILE)")
 	workspacePath := flag.String("workspace", "", "workspace directory for local override (auto-detected if omitted)")
 	generateLockfile := flag.Bool("generate-lockfile", false, "generate lockfile YAML with hashes for all downstreams and exit")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("mcp-firewall %s (%s, %s)\n", version, commit, date)
+		return
+	}
 
 	if *generateLockfile {
 		runGenerateLockfile(*configPath)
@@ -66,6 +78,7 @@ func main() {
 	defer stop()
 
 	p := proxy.New(resolved.Config, logger,
+		proxy.WithVersion(version),
 		proxy.WithProvenance(resolved.ProfileName, resolved.LocalOverride),
 		proxy.WithWorkspace(workspace),
 	)

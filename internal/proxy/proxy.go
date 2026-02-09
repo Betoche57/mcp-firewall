@@ -32,6 +32,7 @@ type Proxy struct {
 	policy              *policy.Engine
 	redaction           *redaction.Engine
 	resourceRoutes      map[string]string // URI → alias
+	version             string
 	profileName         string
 	localOverridePath   string
 	workspacePath       string
@@ -50,6 +51,13 @@ func WithProvenance(profile, localPath string) ProxyOption {
 	}
 }
 
+// WithVersion sets the version string for the MCP Implementation.
+func WithVersion(v string) ProxyOption {
+	return func(p *Proxy) {
+		p.version = v
+	}
+}
+
 // WithWorkspace sets the workspace path for sandbox workspace access.
 func WithWorkspace(path string) ProxyOption {
 	return func(p *Proxy) {
@@ -58,9 +66,21 @@ func WithWorkspace(path string) ProxyOption {
 }
 
 func New(cfg *config.Config, logger *slog.Logger, opts ...ProxyOption) *Proxy {
+	p := &Proxy{
+		cfg:            cfg,
+		logger:         logger,
+		downstreams:    make(map[string]*downstreamEntry),
+		resourceRoutes: make(map[string]string),
+		version:        "dev",
+	}
+
+	for _, opt := range opts {
+		opt(p)
+	}
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "mcp-firewall",
-		Version: "0.2.0",
+		Version: p.version,
 	}, &mcp.ServerOptions{
 		Logger: logger,
 	})
@@ -86,19 +106,9 @@ func New(cfg *config.Config, logger *slog.Logger, opts ...ProxyOption) *Proxy {
 		}
 	}
 
-	p := &Proxy{
-		cfg:            cfg,
-		logger:         logger,
-		server:         server,
-		downstreams:    make(map[string]*downstreamEntry),
-		policy:         pe,
-		redaction:      re,
-		resourceRoutes: make(map[string]string),
-	}
-
-	for _, opt := range opts {
-		opt(p)
-	}
+	p.server = server
+	p.policy = pe
+	p.redaction = re
 
 	return p
 }
@@ -106,7 +116,7 @@ func New(cfg *config.Config, logger *slog.Logger, opts ...ProxyOption) *Proxy {
 func (p *Proxy) ConnectDownstream(ctx context.Context, alias string, t mcp.Transport) error {
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "mcp-firewall-client",
-		Version: "0.2.0",
+		Version: p.version,
 	}, nil)
 
 	session, err := client.Connect(ctx, t, nil)

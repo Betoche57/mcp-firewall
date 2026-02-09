@@ -1,0 +1,27 @@
+{
+  "name": "mcp-firewall",
+  "version": "0.0.0",
+  "description": "Security firewall proxy for MCP servers — policy enforcement, redaction, sandboxing, and supply chain controls",
+  "bin": {
+    "mcp-firewall": "index.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "keywords": [
+    "mcp",
+    "firewall",
+    "proxy",
+    "security",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VikingOwl91/mcp-firewall.git"
+  },
+  "homepage": "https://github.com/VikingOwl91/mcp-firewall",
+  "bugs": {
+    "url": "https://github.com/VikingOwl91/mcp-firewall/issues"
+  }
+}

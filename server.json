@@ -1,0 +1,33 @@
+{
+  "name": "mcp-firewall",
+  "display_name": "MCP Firewall",
+  "description": "Security firewall proxy for MCP servers — policy enforcement, redaction, sandboxing, and supply chain controls",
+  "repository": {
+    "url": "https://github.com/VikingOwl91/mcp-firewall",
+    "source": "github",
+    "id": "VikingOwl91/mcp-firewall"
+  },
+  "version_detail": {
+    "version": "0.5.0",
+    "release_date": "2026-02-09",
+    "is_latest": true
+  },
+  "packages": [
+    {
+      "registry_name": "npm",
+      "name": "mcp-firewall",
+      "version": "0.5.0"
+    },
+    {
+      "registry_name": "go",
+      "name": "github.com/VikingOwl91/mcp-firewall",
+      "version": "0.5.0"
+    }
+  ],
+  "remotes": {
+    "stdio": {
+      "npx_command": "npx -y mcp-firewall --config /path/to/config.yaml",
+      "args": ["--config", "/path/to/config.yaml"]
+    }
+  }
+}
