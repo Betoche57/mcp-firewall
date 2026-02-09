@@ -9,13 +9,13 @@ const os = require("os");
 const REPO = "VikingOwl91/mcp-firewall";
 
 const PLATFORM_MAP = {
-  linux: "Linux",
-  darwin: "Darwin",
-  win32: "Windows",
+  linux: "linux",
+  darwin: "darwin",
+  win32: "windows",
 };
 
 const ARCH_MAP = {
-  x64: "x86_64",
+  x64: "amd64",
   arm64: "arm64",
 };
 
