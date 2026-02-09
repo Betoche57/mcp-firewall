@@ -15,7 +15,7 @@
   "packages": [
     {
       "registry_name": "npm",
-      "name": "mcp-firewall",
+      "name": "@vikingowl/mcp-firewall",
       "version": "1.0.0"
     },
     {
@@ -26,7 +26,7 @@
   ],
   "remotes": {
     "stdio": {
-      "npx_command": "npx -y mcp-firewall --config /path/to/config.yaml",
+      "npx_command": "npx -y @vikingowl/mcp-firewall --config /path/to/config.yaml",
       "args": ["--config", "/path/to/config.yaml"]
     }
   }

@@ -1,5 +1,5 @@
 {
-  "name": "mcp-firewall",
+  "name": "@vikingowl/mcp-firewall",
   "version": "1.0.0",
   "description": "Security firewall proxy for MCP servers — policy enforcement, redaction, sandboxing, and supply chain controls",
   "bin": {
@@ -23,5 +23,8 @@
   "homepage": "https://github.com/VikingOwl91/mcp-firewall",
   "bugs": {
     "url": "https://github.com/VikingOwl91/mcp-firewall/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
