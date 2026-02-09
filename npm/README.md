@@ -37,17 +37,39 @@ Download prebuilt binaries from [GitHub Releases](https://github.com/VikingOwl91
 ### 1. Create a config file
 
 ```bash
-mcp-firewall --init
+npx -y @vikingowl/mcp-firewall --init
 # Creates ~/.mcp-firewall/config.yaml with a commented template
 ```
 
-Then edit it to add your downstream servers and policy rules:
+### 2. Move your existing MCP servers into the firewall config
+
+Take the servers from your MCP client config and add them as `downstreams` in `~/.mcp-firewall/config.yaml`. For example, if your client config looks like this:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
+    }
+  }
+}
+```
+
+Move them into the firewall config as downstreams:
 
 ```yaml
 downstreams:
-  myserver:
-    command: my-mcp-server
-    args: ["--port", "3000"]
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
 
 policy:
   default: deny
@@ -61,20 +83,24 @@ policy:
       message: "This tool will modify data. Approve?"
 ```
 
-### 2. Configure your MCP client
+### 3. Replace your MCP client config with the firewall
+
+Replace all your server entries with a single firewall entry:
 
 ```json
 {
   "mcpServers": {
     "firewall": {
       "command": "npx",
-      "args": ["-y", "mcp-firewall", "--config", "/path/to/config.yaml"]
+      "args": ["-y", "@vikingowl/mcp-firewall", "--config", "~/.mcp-firewall/config.yaml"]
     }
   }
 }
 ```
 
-### 3. Run directly (optional)
+All your servers are now proxied through the firewall. Tools are namespaced automatically (e.g., `github__create_issue`, `filesystem__read_file`), and all requests go through policy evaluation, redaction, and audit logging.
+
+### 4. Run directly (optional)
 
 ```bash
 mcp-firewall --config config.yaml
