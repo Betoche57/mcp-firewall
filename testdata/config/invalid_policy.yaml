@@ -1,0 +1,9 @@
+downstreams:
+  myserver:
+    command: echo
+policy:
+  default: deny
+  rules:
+    - name: bad-rule
+      expression: "not valid cel !!!"
+      effect: allow

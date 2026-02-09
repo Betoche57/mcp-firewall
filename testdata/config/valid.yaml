@@ -1,7 +1,16 @@
-downstream:
-  command: ./testdata/echoserver/echoserver
-  args:
-    - --verbose
-  env:
-    - FOO=bar
+downstreams:
+  echoserver:
+    command: ./testdata/echoserver/echoserver
+    args:
+      - --verbose
+    env:
+      - FOO=bar
+  another:
+    command: ./another-server
+policy:
+  default: deny
+  rules:
+    - name: allow-echo
+      expression: 'server == "echoserver" && tool.name == "echo"'
+      effect: allow
 log_level: debug

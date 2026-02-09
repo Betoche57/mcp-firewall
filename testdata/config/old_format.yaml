@@ -1,0 +1,3 @@
+downstream:
+  command: ./testdata/echoserver/echoserver
+log_level: debug
